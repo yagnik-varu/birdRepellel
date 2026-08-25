@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -13,52 +16,61 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import androidx.exifinterface.media.ExifInterface
-import androidx.compose.foundation.Canvas
-import kotlin.math.max
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yagnik.birdrepeller.data.settings.RoiRepository
 import com.yagnik.birdrepeller.detection.BirdDetector
+import com.yagnik.birdrepeller.ui.roi.RoiOverlay
+import com.yagnik.birdrepeller.ui.roi.RoiViewModel
+import com.yagnik.birdrepeller.ui.roi.RoiViewModelFactory
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var birdDetector: BirdDetector
+    private lateinit var roiRepository: RoiRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         cameraExecutor = Executors.newSingleThreadExecutor()
         birdDetector = BirdDetector(this)
+        roiRepository = RoiRepository(this)
         
         // Initialize detector on the same background thread it will be used on
         cameraExecutor.execute {
@@ -72,7 +84,10 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     PermissionGateway {
-                        CameraScreen(cameraExecutor, birdDetector)
+                        val roiViewModel: RoiViewModel = viewModel(
+                            factory = RoiViewModelFactory(roiRepository)
+                        )
+                        CameraScreen(cameraExecutor, birdDetector, roiViewModel)
                     }
                 }
             }
@@ -180,91 +195,142 @@ fun PermissionDeniedScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CameraScreen(cameraExecutor: ExecutorService, birdDetector: BirdDetector) {
+fun CameraScreen(
+    cameraExecutor: ExecutorService, 
+    birdDetector: BirdDetector,
+    roiViewModel: RoiViewModel
+) {
     val context = LocalContext.current
     val imageCapture = remember { ImageCapture.Builder().build() }
     var lastLatency by remember { mutableStateOf<Long?>(null) }
     var detections by remember { mutableStateOf<List<BirdDetector.DetectionResult>>(emptyList()) }
     var bitmapSize by remember { mutableStateOf<IntSize?>(null) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        CameraPreview(imageCapture)
-
-        if (!birdDetector.isInitialized()) {
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp)
-            ) {
-                Text(
-                    "Error: Model failed to load",
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.padding(8.dp)
-                )
-            }
-        }
-
-        DetectionOverlay(detections, bitmapSize)
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            lastLatency?.let {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    val statusText = if (detections.isEmpty()) {
-                        "Last capture: ${it}ms | No objects found"
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Bird Repeller") },
+                actions = {
+                    if (roiViewModel.isEditMode) {
+                        IconButton(onClick = { roiViewModel.resetRoi() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Reset")
+                        }
+                        IconButton(onClick = { roiViewModel.saveRoi() }) {
+                            Icon(Icons.Default.Check, contentDescription = "Save", tint = Color.Green)
+                        }
+                        IconButton(onClick = { roiViewModel.toggleEditMode() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.Red)
+                        }
                     } else {
-                        val topLabels = detections.flatMap { d -> d.categories }.take(3).joinToString { "${it.first} (${(it.second * 100).toInt()}%)" }
-                        "Last capture: ${it}ms | Seen: $topLabels"
-                    }
-                    Text(
-                        text = statusText,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            Button(
-                onClick = {
-                    capturePhoto(context, imageCapture, cameraExecutor) { latency, file ->
-                        // All detector work MUST happen on the same thread (cameraExecutor)
-                        var bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                        if (bitmap != null) {
-                            bitmap = rotateBitmapIfRequired(bitmap, file)
-                            
-                            val maxDimension = 1024
-                            if (bitmap.width > maxDimension || bitmap.height > maxDimension) {
-                                val scale = maxDimension.toFloat() / max(bitmap.width, bitmap.height)
-                                bitmap = Bitmap.createScaledBitmap(
-                                    bitmap, 
-                                    (bitmap.width * scale).toInt(), 
-                                    (bitmap.height * scale).toInt(), 
-                                    true
-                                )
-                            }
-                            
-                            val results = birdDetector.detect(bitmap)
-                            val size = IntSize(bitmap.width, bitmap.height)
-
-                            // Update UI state on the main thread
-                            (context as Activity).runOnUiThread {
-                                lastLatency = latency
-                                bitmapSize = size
-                                detections = results
-                            }
+                        IconButton(onClick = { roiViewModel.toggleEditMode() }) {
+                            Icon(Icons.Default.Layers, contentDescription = "Set Capture Area")
                         }
                     }
                 }
-            ) {
-                Text("Capture & Detect")
+            )
+        }
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            CameraPreview(imageCapture)
+
+            RoiOverlay(
+                roi = roiViewModel.roi,
+                onRoiChange = { roiViewModel.updateRoi(it) },
+                onRoiSave = { roiViewModel.saveRoi() },
+                isEnabled = roiViewModel.isEditMode
+            )
+
+            if (!birdDetector.isInitialized()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp)
+                ) {
+                    Text(
+                        "Error: Model failed to load",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            }
+
+            DetectionOverlay(detections, bitmapSize)
+
+            if (!roiViewModel.isEditMode) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    lastLatency?.let {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            val statusText = if (detections.isEmpty()) {
+                                "Last capture: ${it}ms | No objects found"
+                            } else {
+                                val topLabels = detections.flatMap { d -> d.categories }.take(3).joinToString { "${it.first} (${(it.second * 100).toInt()}%)" }
+                                "Last capture: ${it}ms | Seen: $topLabels"
+                            }
+                            Text(
+                                text = statusText,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    Button(
+                        onClick = {
+                            capturePhoto(context, imageCapture, cameraExecutor) { latency, file ->
+                                // All detector work MUST happen on the same thread (cameraExecutor)
+                                var bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                                if (bitmap != null) {
+                                    bitmap = rotateBitmapIfRequired(bitmap, file)
+                                    
+                                    val maxDimension = 1024
+                                    if (bitmap.width > maxDimension || bitmap.height > maxDimension) {
+                                        val scale = maxDimension.toFloat() / max(bitmap.width, bitmap.height)
+                                        bitmap = Bitmap.createScaledBitmap(
+                                            bitmap, 
+                                            (bitmap.width * scale).toInt(), 
+                                            (bitmap.height * scale).toInt(), 
+                                            true
+                                        )
+                                    }
+                                    
+                                    val results = birdDetector.detect(bitmap)
+                                    val size = IntSize(bitmap.width, bitmap.height)
+
+                                    // Update UI state on the main thread
+                                    (context as Activity).runOnUiThread {
+                                        lastLatency = latency
+                                        bitmapSize = size
+                                        detections = results
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Capture & Detect")
+                    }
+                }
+            } else {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        "Drag handles to set Capture Area",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     }
