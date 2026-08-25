@@ -24,10 +24,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,12 +46,19 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
+import com.yagnik.birdrepeller.actuation.AudioPlayer
+import com.yagnik.birdrepeller.data.settings.AudioRepository
+import kotlinx.coroutines.launch
 import com.yagnik.birdrepeller.data.settings.RoiRepository
 import com.yagnik.birdrepeller.detection.BirdDetector
 import com.yagnik.birdrepeller.detection.RoiIntersection
 import com.yagnik.birdrepeller.ui.roi.RoiOverlay
 import com.yagnik.birdrepeller.ui.roi.RoiViewModel
 import com.yagnik.birdrepeller.ui.roi.RoiViewModelFactory
+import com.yagnik.birdrepeller.ui.settings.AudioSettingsScreen
+import com.yagnik.birdrepeller.ui.settings.AudioViewModel
+import com.yagnik.birdrepeller.ui.settings.AudioViewModelFactory
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -66,12 +70,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var birdDetector: BirdDetector
     private lateinit var roiRepository: RoiRepository
+    private lateinit var audioRepository: AudioRepository
+    private lateinit var audioPlayer: AudioPlayer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         cameraExecutor = Executors.newSingleThreadExecutor()
         birdDetector = BirdDetector(this)
         roiRepository = RoiRepository(this)
+        audioRepository = AudioRepository(this)
+        audioPlayer = AudioPlayer(this, audioRepository)
         
         // Initialize detector on the same background thread it will be used on
         cameraExecutor.execute {
@@ -88,7 +96,10 @@ class MainActivity : ComponentActivity() {
                         val roiViewModel: RoiViewModel = viewModel(
                             factory = RoiViewModelFactory(roiRepository)
                         )
-                        CameraScreen(cameraExecutor, birdDetector, roiViewModel)
+                        val audioViewModel: AudioViewModel = viewModel(
+                            factory = AudioViewModelFactory(this@MainActivity, audioRepository)
+                        )
+                        MainContent(cameraExecutor, birdDetector, roiViewModel, audioViewModel, audioPlayer)
                     }
                 }
             }
@@ -196,14 +207,66 @@ fun PermissionDeniedScreen(
     }
 }
 
+@Composable
+fun MainContent(
+    cameraExecutor: ExecutorService,
+    birdDetector: BirdDetector,
+    roiViewModel: RoiViewModel,
+    audioViewModel: AudioViewModel,
+    audioPlayer: AudioPlayer
+) {
+    var currentScreen by remember { mutableStateOf(Screen.Camera) }
+
+    when (currentScreen) {
+        Screen.Camera -> {
+            CameraScreen(
+                cameraExecutor = cameraExecutor,
+                birdDetector = birdDetector,
+                roiViewModel = roiViewModel,
+                audioPlayer = audioPlayer,
+                onNavigateToAudio = { currentScreen = Screen.Audio }
+            )
+        }
+        Screen.Audio -> {
+            Scaffold(
+                topBar = {
+                    @OptIn(ExperimentalMaterial3Api::class)
+                    TopAppBar(
+                        title = { Text("Audio Settings") },
+                        navigationIcon = {
+                            IconButton(onClick = { currentScreen = Screen.Camera }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    )
+                }
+            ) { padding ->
+                Box(modifier = Modifier.padding(padding)) {
+                    AudioSettingsScreen(
+                        viewModel = audioViewModel,
+                        onBack = { currentScreen = Screen.Camera }
+                    )
+                }
+            }
+        }
+    }
+}
+
+enum class Screen {
+    Camera, Audio
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(
     cameraExecutor: ExecutorService, 
     birdDetector: BirdDetector,
-    roiViewModel: RoiViewModel
+    roiViewModel: RoiViewModel,
+    audioPlayer: AudioPlayer,
+    onNavigateToAudio: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val imageCapture = remember { ImageCapture.Builder().build() }
     var lastLatency by remember { mutableStateOf<Long?>(null) }
     var detections by remember { mutableStateOf<List<BirdDetector.DetectionResult>>(emptyList()) }
@@ -225,6 +288,9 @@ fun CameraScreen(
                             Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.Red)
                         }
                     } else {
+                        IconButton(onClick = { onNavigateToAudio() }) {
+                            Icon(Icons.Default.MusicNote, contentDescription = "Audio Settings")
+                        }
                         IconButton(onClick = { roiViewModel.toggleEditMode() }) {
                             Icon(Icons.Default.Layers, contentDescription = "Set Capture Area")
                         }
@@ -317,6 +383,15 @@ fun CameraScreen(
                                             )
                                         )
                                     }
+                                    
+                                    val actionableCount = results.count { it.isBird && it.isInRoi }
+                                    if (actionableCount > 0) {
+                                        Log.i("MainActivity", "Deterrent triggered! Birds in ROI: $actionableCount")
+                                        scope.launch {
+                                            audioPlayer.playNextDeterrent()
+                                        }
+                                    }
+
                                     val size = IntSize(bitmap.width, bitmap.height)
 
                                     // Update UI state on the main thread
