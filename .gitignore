@@ -1,0 +1,23 @@
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.gradle/
+build/
+local.properties
+
+# Gradle
+.gradle
+/build
+/app/build
+
+# Logs
+*.log
+
+# Built artifacts
+*.apk
+*.aar
+*.jar
+
+# System Files
+.DS_Store
+Thumbs.db
