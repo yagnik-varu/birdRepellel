@@ -2,11 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.yagnik.birdrepeller">
 
+    <!--
+        Permissions required for the Autonomous Edge AI Solar Bird Repeller:
+        - CAMERA: To capture images for bird detection.
+        - WAKE_LOCK: To keep the CPU running during a short capture/inference cycle when the screen is off.
+        - RECEIVE_BOOT_COMPLETED: To re-schedule the capture duty cycle after the device reboots.
+        - FOREGROUND_SERVICE: To run the capture/inference pipeline in the background.
+        - FOREGROUND_SERVICE_CAMERA: (API 34+) Specific type for foreground services using the camera.
+        - SCHEDULE_EXACT_ALARM: To wake the device at precise intervals (e.g., every 5 minutes) for the duty cycle.
+    -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
