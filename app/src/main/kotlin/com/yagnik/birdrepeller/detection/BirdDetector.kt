@@ -72,9 +72,17 @@ class BirdDetector(private val context: Context) {
                 it.label.contains("teddy bear", ignoreCase = true) ||
                 it.label.contains("kite", ignoreCase = true)
             }
+
+            val normalizedBox = android.graphics.RectF(
+                detection.boundingBox.left / bitmap.width,
+                detection.boundingBox.top / bitmap.height,
+                detection.boundingBox.right / bitmap.width,
+                detection.boundingBox.bottom / bitmap.height
+            )
             
             DetectionResult(
                 boundingBox = detection.boundingBox,
+                normalizedBoundingBox = normalizedBox,
                 categories = categories,
                 isBird = isBirdMatch
             )
@@ -83,8 +91,10 @@ class BirdDetector(private val context: Context) {
 
     data class DetectionResult(
         val boundingBox: android.graphics.RectF,
+        val normalizedBoundingBox: android.graphics.RectF,
         val categories: List<Pair<String, Float>>,
-        val isBird: Boolean
+        val isBird: Boolean,
+        val isInRoi: Boolean = false
     )
     
     fun close() {

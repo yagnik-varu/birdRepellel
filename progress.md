@@ -9,7 +9,7 @@ Tracks phase-by-phase progress. Update status and date as work happens. See `IMP
 | 2 — Single-Shot Capture | Done | 2026-08-25 | Implemented and verified on device |
 | 3 — Bird Detection (Manual) | Done | 2026-08-25 | TFLite wrapper implemented and verified with broad labels |
 | 4 — ROI Editor | Done | 2026-08-25 | Draggable/resizable ROI overlay implemented with DataStore persistence |
-| 5 — ROI-Gated Detection | Not Started | | |
+| 5 — ROI-Gated Detection | Done | 2026-08-25 | Combined detection with ROI intersection logic; verified with unit tests. Overlap rule: Any Overlap (AABB). |
 | 6 — Audio Deterrent Actuation | Not Started | | |
 | 7 — Background Scheduling | Not Started | | |
 | 8 — Telemetry & Logging | Not Started | | |

@@ -51,6 +51,7 @@ import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yagnik.birdrepeller.data.settings.RoiRepository
 import com.yagnik.birdrepeller.detection.BirdDetector
+import com.yagnik.birdrepeller.detection.RoiIntersection
 import com.yagnik.birdrepeller.ui.roi.RoiOverlay
 import com.yagnik.birdrepeller.ui.roi.RoiViewModel
 import com.yagnik.birdrepeller.ui.roi.RoiViewModelFactory
@@ -272,8 +273,9 @@ fun CameraScreen(
                             val statusText = if (detections.isEmpty()) {
                                 "Last capture: ${it}ms | No objects found"
                             } else {
-                                val topLabels = detections.flatMap { d -> d.categories }.take(3).joinToString { "${it.first} (${(it.second * 100).toInt()}%)" }
-                                "Last capture: ${it}ms | Seen: $topLabels"
+                                val actionable = detections.count { d -> d.isBird && d.isInRoi }
+                                val seen = detections.flatMap { d -> d.categories }.take(2).joinToString { c -> c.first }
+                                "Last capture: ${it}ms | Seen: $seen | Actionable: $actionable"
                             }
                             Text(
                                 text = statusText,
@@ -303,7 +305,18 @@ fun CameraScreen(
                                         )
                                     }
                                     
-                                    val results = birdDetector.detect(bitmap)
+                                    val rawResults = birdDetector.detect(bitmap)
+                                    val results = rawResults.map { detection ->
+                                        detection.copy(
+                                            isInRoi = RoiIntersection.intersects(
+                                                detection.normalizedBoundingBox.left,
+                                                detection.normalizedBoundingBox.top,
+                                                detection.normalizedBoundingBox.right,
+                                                detection.normalizedBoundingBox.bottom,
+                                                roiViewModel.roi
+                                            )
+                                        )
+                                    }
                                     val size = IntSize(bitmap.width, bitmap.height)
 
                                     // Update UI state on the main thread
@@ -354,7 +367,8 @@ fun DetectionOverlay(detections: List<BirdDetector.DetectionResult>, bitmapSize:
             val width = box.width() * scaleX
             val height = box.height() * scaleY
 
-            val color = if (detection.isBird) Color.Red else Color.Green
+            val isActionable = detection.isBird && detection.isInRoi
+            val color = if (isActionable) Color.Red else if (detection.isBird) Color.Blue else Color.Green
             
             drawRect(
                 color = color,
@@ -364,8 +378,9 @@ fun DetectionOverlay(detections: List<BirdDetector.DetectionResult>, bitmapSize:
             )
 
             // Draw label and score
+            val statusLabel = if (isActionable) "ACTIONABLE" else if (detection.isBird) "IGNORED" else "OTHER"
             val labelText = detection.categories.firstOrNull()?.let { 
-                "${it.first} ${(it.second * 100).toInt()}%" 
+                "${it.first} ${(it.second * 100).toInt()}% ($statusLabel)" 
             } ?: "Unknown"
 
             drawContext.canvas.nativeCanvas.drawText(
@@ -373,7 +388,11 @@ fun DetectionOverlay(detections: List<BirdDetector.DetectionResult>, bitmapSize:
                 left,
                 if (top > 40) top - 10 else top + 40,
                 android.graphics.Paint().apply {
-                    this.color = if (detection.isBird) android.graphics.Color.RED else android.graphics.Color.GREEN
+                    this.color = when {
+                        isActionable -> android.graphics.Color.RED
+                        detection.isBird -> android.graphics.Color.BLUE
+                        else -> android.graphics.Color.GREEN
+                    }
                     this.textSize = with(density) { 16.sp.toPx() }
                     this.isFakeBoldText = true
                 }
