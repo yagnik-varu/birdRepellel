@@ -41,6 +41,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
 import com.yagnik.birdrepeller.detection.BirdDetector
 import java.io.File
 import java.text.SimpleDateFormat
@@ -271,6 +274,7 @@ fun CameraScreen(cameraExecutor: ExecutorService, birdDetector: BirdDetector) {
 fun DetectionOverlay(detections: List<BirdDetector.DetectionResult>, bitmapSize: IntSize?) {
     if (bitmapSize == null) return
 
+    val density = LocalDensity.current
     Canvas(modifier = Modifier.fillMaxSize()) {
         detections.forEach { detection ->
             val box = detection.boundingBox
@@ -284,11 +288,29 @@ fun DetectionOverlay(detections: List<BirdDetector.DetectionResult>, bitmapSize:
             val width = box.width() * scaleX
             val height = box.height() * scaleY
 
+            val color = if (detection.isBird) Color.Red else Color.Green
+            
             drawRect(
-                color = if (detection.isBird) Color.Red else Color.Green,
+                color = color,
                 topLeft = Offset(left, top),
                 size = Size(width, height),
                 style = Stroke(width = 4f)
+            )
+
+            // Draw label and score
+            val labelText = detection.categories.firstOrNull()?.let { 
+                "${it.first} ${(it.second * 100).toInt()}%" 
+            } ?: "Unknown"
+
+            drawContext.canvas.nativeCanvas.drawText(
+                labelText,
+                left,
+                if (top > 40) top - 10 else top + 40,
+                android.graphics.Paint().apply {
+                    this.color = if (detection.isBird) android.graphics.Color.RED else android.graphics.Color.GREEN
+                    this.textSize = with(density) { 16.sp.toPx() }
+                    this.isFakeBoldText = true
+                }
             )
         }
     }

@@ -17,8 +17,8 @@ class BirdDetector(private val context: Context) {
         if (detector != null) return
         
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
-            .setScoreThreshold(0.15f)
-            .setMaxResults(10)
+            .setScoreThreshold(0.10f)
+            .setMaxResults(15)
 
         val baseOptionsBuilder = BaseOptions.builder().useGpu()
         optionsBuilder.setBaseOptions(baseOptionsBuilder.build())
@@ -62,10 +62,15 @@ class BirdDetector(private val context: Context) {
 
         return results.map { detection ->
             val categories = detection.categories.map { it.label to it.score }
+            // Since the device is on a rooftop solar panel, 'person' or 'teddy bear' 
+            // detections are almost certainly misidentified birds.
             val isBirdMatch = detection.categories.any { 
                 it.label.contains("bird", ignoreCase = true) || 
                 it.label.contains("pigeon", ignoreCase = true) || 
-                it.label.contains("crow", ignoreCase = true)
+                it.label.contains("crow", ignoreCase = true) ||
+                it.label.contains("person", ignoreCase = true) ||
+                it.label.contains("teddy bear", ignoreCase = true) ||
+                it.label.contains("kite", ignoreCase = true)
             }
             
             DetectionResult(
